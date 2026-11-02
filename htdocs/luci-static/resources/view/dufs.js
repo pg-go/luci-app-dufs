@@ -34,6 +34,15 @@ function isFlagEnabled(value) {
 	return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+function isHttpsEnabled(cfg) {
+	if (!cfg)
+		return false;
+	/* 明确关掉就走 HTTP，哪怕证书路径还留着；没填过开关的老配置按证书是否齐全兼容 */
+	if (cfg.enable_https === '0' || cfg.enable_https === false || cfg.enable_https === 0 || cfg.enable_https === 'false')
+		return false;
+	return !!(cfg.tls_cert && cfg.tls_key);
+}
+
 function syncInitState(enabled) {
 	var actions = enabled ? ['enable', 'restart'] : ['disable', 'stop'];
 
@@ -206,7 +215,7 @@ function getHostForURL() {
 }
 
 function buildBaseURL(cfg) {
-	var scheme = (cfg.tls_cert && cfg.tls_key) ? 'https' : 'http';
+	var scheme = isHttpsEnabled(cfg) ? 'https' : 'http';
 	var host = getHostForURL();
 	var port = String(cfg.port || '5000');
 	var prefix = normalizePathPrefix(cfg.path_prefix);
@@ -215,7 +224,7 @@ function buildBaseURL(cfg) {
 }
 
 function buildHealthURL(cfg) {
-	var scheme = (cfg.tls_cert && cfg.tls_key) ? 'https' : 'http';
+	var scheme = isHttpsEnabled(cfg) ? 'https' : 'http';
 	var host = getHostForURL();
 	var port = String(cfg.port || '5000');
 	var prefix = normalizePathPrefix(cfg.path_prefix);
@@ -686,9 +695,9 @@ return view.extend({
 			form.Value,
 			'assets',
 			_('静态资源目录'),
-			_('自定义前端资源目录，通常填写绝对路径，例如 /www/dufs-assets。')
+			_('对应 dufs 的 --assets：默认使用随包带的 Tabler 主题，改成别的目录可覆盖，清空则用 dufs 内置界面。')
 		);
-		o.placeholder = '/www/dufs-assets';
+		o.placeholder = '/usr/share/dufs-assets';
 		o.validate = function(section_id, value) {
 			if (!value)
 				return true;
@@ -733,12 +742,20 @@ return view.extend({
 		o.default = 'low';
 
 		o = s.option(
+			form.Flag,
+			'enable_https',
+			_('启用 HTTPS'),
+			_('打勾后才使用下面的证书和私钥以 HTTPS 提供服务；关掉则走 HTTP，证书路径留着也不生效。老配置只填了证书、没打过勾的，证书齐全时仍按 HTTPS 显示。')
+		);
+		o.default = o.disabled;
+
+		o = s.option(
 			form.Value,
 			'tls_cert',
 			_('TLS 证书路径'),
-			_('启用 HTTPS 所需证书文件（PEM）。需与私钥同时配置。')
+			_('启用 HTTPS 所需证书文件（PEM）。需与私钥同时配置，且“启用 HTTPS”要打勾。')
 		);
-		o.placeholder = '/etc/dufs/cert.pem';
+		o.placeholder = '/root/111091_ssl/111091.pem';
 		o.validate = function(section_id, value) {
 			if (!value)
 				return true;
@@ -751,9 +768,9 @@ return view.extend({
 			form.Value,
 			'tls_key',
 			_('TLS 私钥路径'),
-			_('启用 HTTPS 所需私钥文件（PEM）。需与证书同时配置。')
+			_('启用 HTTPS 所需私钥文件（PEM）。需与证书同时配置，且“启用 HTTPS”要打勾。')
 		);
-		o.placeholder = '/etc/dufs/key.pem';
+		o.placeholder = '/root/111091_ssl/111091.key';
 		o.validate = function(section_id, value) {
 			if (!value)
 				return true;
