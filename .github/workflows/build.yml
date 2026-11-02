@@ -71,6 +71,7 @@ jobs:
       - name: Build
         uses: openwrt/gh-action-sdk@main
         env:
+          V: "s"
           ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
           FEEDNAME: dufs
           FEED_DIR: /tmp/dufs-feed
