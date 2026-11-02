@@ -9,15 +9,9 @@ LUCI_TITLE:=LuCI support for dufs
 LUCI_DEPENDS:=+luci-base
 LUCI_PKGARCH:=all
 
-include $(TOPDIR)/feeds/luci/luci.mk
-
 define Package/luci-app-dufs/postinst
 #!/bin/sh
 [ -n "$$$$IPKG_INSTROOT" ] && exit 0
-case "$$$$1" in
-	""|configure) ;;
-	*) exit 0 ;;
-esac
 
 if [ ! -f /etc/config/dufs ]; then
 cat > /etc/config/dufs <<'EOF'
@@ -82,5 +76,7 @@ rm -f /tmp/luci-indexcache
 rm -rf /tmp/luci-modulecache/*
 exit 0
 endef
+
+include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature
