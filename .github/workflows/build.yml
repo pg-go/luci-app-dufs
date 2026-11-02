@@ -46,7 +46,7 @@ jobs:
           echo "dufs version from DUFS_VERSION: $VERSION"
           if [ "${{ matrix.arch }}" = "x86_64" ]; then
             TARGET="x86_64-unknown-linux-musl"
-            CHECK="X86-64"
+            CHECK="x86-64"
           else
             TARGET="aarch64-unknown-linux-musl"
             CHECK="ARM aarch64"
@@ -57,7 +57,7 @@ jobs:
           curl -fsSL -o /tmp/dufs.tar.gz "$URL"
           mkdir -p /tmp/dufs-new
           tar -xzf /tmp/dufs.tar.gz -C /tmp/dufs-new
-          file /tmp/dufs-new/dufs | grep -q "$CHECK" || { echo "binary arch mismatch" >&2; exit 1; }
+          file /tmp/dufs-new/dufs | grep -iq "$CHECK" || { echo "binary arch mismatch" >&2; exit 1; }
           strings /tmp/dufs-new/dufs | grep -q "$VERSION" || { echo "version string not found in binary" >&2; exit 1; }
           chmod 0755 /tmp/dufs-new/dufs
           cp /tmp/dufs-new/dufs root/usr/bin/dufs
