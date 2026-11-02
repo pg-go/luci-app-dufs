@@ -755,7 +755,7 @@ return view.extend({
 			_('TLS 证书路径'),
 			_('启用 HTTPS 所需证书文件（PEM）。需与私钥同时配置，且“启用 HTTPS”要打勾。')
 		);
-		o.placeholder = '/root/111091_ssl/111091.pem';
+		o.placeholder = '/etc/dufs/cert.pem';
 		o.validate = function(section_id, value) {
 			if (!value)
 				return true;
@@ -770,7 +770,7 @@ return view.extend({
 			_('TLS 私钥路径'),
 			_('启用 HTTPS 所需私钥文件（PEM）。需与证书同时配置，且“启用 HTTPS”要打勾。')
 		);
-		o.placeholder = '/root/111091_ssl/111091.key';
+		o.placeholder = '/etc/dufs/key.pem';
 		o.validate = function(section_id, value) {
 			if (!value)
 				return true;
