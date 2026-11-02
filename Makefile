@@ -1,7 +1,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-dufs
-PKG_VERSION:=$(shell date +%y%m%d-%H%M)
+PKG_VERSION:=$(shell date +%y%m%d%H%M)
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=macm4
 
