@@ -1,0 +1,129 @@
+name: build
+
+# 像 Homi 那样用 SDK 原生出包：24.10 出 ipk，25.12 出 apk，不做格式转换。
+# 架构去掉 ARM7，只留 Homi 那 4 个：x86_64、aarch64_cortex-a53、aarch64_cortex-a72、aarch64_generic。
+# 关键：SDK 编译前按架构换一次二进制，x86_64 换 x86_64-musl，aarch64 三个都换 aarch64-musl，
+# 否则 SDK 会把仓库里那个 aarch64 二进制原样打进 x86_64 的包里。
+# 二进制版本以仓库根 DUFS_VERSION 为准，编译时现从 sigoden/dufs 下载，不依赖仓库里内嵌的那个。
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '发版标签（例如 v0.0.1），留空则只构建不发布'
+        required: false
+        default: ''
+  push:
+    tags:
+      - 'v*'
+
+env:
+  FEEDNAME: dufs
+
+jobs:
+  build-packages:
+    name: packages ${{ matrix.arch }} ${{ matrix.branch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x86_64
+          - aarch64_cortex-a53
+          - aarch64_cortex-a72
+          - aarch64_generic
+        branch:
+          - openwrt-24.10
+          - openwrt-25.12
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare feed and per-arch binary
+        run: |
+          set -eu
+          VERSION=$(cat DUFS_VERSION | tr -d ' \t\r\n')
+          echo "dufs version from DUFS_VERSION: $VERSION"
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            TARGET="x86_64-unknown-linux-musl"
+            CHECK="X86-64"
+          else
+            TARGET="aarch64-unknown-linux-musl"
+            CHECK="ARM aarch64"
+          fi
+          TARBALL="dufs-v${VERSION}-${TARGET}.tar.gz"
+          URL="https://github.com/sigoden/dufs/releases/download/v${VERSION}/${TARBALL}"
+          echo "downloading $URL"
+          curl -fsSL -o /tmp/dufs.tar.gz "$URL"
+          mkdir -p /tmp/dufs-new
+          tar -xzf /tmp/dufs.tar.gz -C /tmp/dufs-new
+          file /tmp/dufs-new/dufs | grep -q "$CHECK" || { echo "binary arch mismatch" >&2; exit 1; }
+          strings /tmp/dufs-new/dufs | grep -q "$VERSION" || { echo "version string not found in binary" >&2; exit 1; }
+          chmod 0755 /tmp/dufs-new/dufs
+          cp /tmp/dufs-new/dufs root/usr/bin/dufs
+          # gh-action-sdk 把仓库当 feed 用，feed 里包必须是子目录，
+          # 本仓根本身就是 luci-app-dufs 这个包，所以先拼一个临时 feed 目录。
+          rm -rf /tmp/dufs-feed
+          mkdir -p /tmp/dufs-feed/luci-app-dufs
+          cp -a Makefile README.md demo.avif htdocs root DUFS_VERSION /tmp/dufs-feed/luci-app-dufs/
+          ls -l /tmp/dufs-feed/luci-app-dufs/root/usr/bin/dufs
+
+      - name: Build
+        uses: openwrt/gh-action-sdk@main
+        env:
+          ARCH: ${{ matrix.arch }}-${{ matrix.branch }}
+          FEEDNAME: dufs
+          FEED_DIR: /tmp/dufs-feed
+          PACKAGES: luci-app-dufs
+          NO_REFRESH_CHECK: true
+
+      - name: Bundle
+        run: |
+          if [ "${{ matrix.branch }}" = "openwrt-24.10" ]; then ext=ipk; else ext=apk; fi
+          tar -c -z -f "dufs-${{ matrix.arch }}-$ext.tar.gz" \
+            -C "bin/packages/${{ matrix.arch }}/dufs" .
+          tar -tzf "dufs-${{ matrix.arch }}-$ext.tar.gz"
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.arch }}-${{ matrix.branch }}
+          path: dufs-${{ matrix.arch }}-*.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.release_tag != '')
+    needs: build-packages
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read dufs version
+        id: version
+        run: |
+          VERSION=$(cat DUFS_VERSION | tr -d ' \t\r\n')
+          echo "dufs_version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dufs version: $VERSION"
+
+      - name: Download bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: bundle-*
+          merge-multiple: true
+          path: dist
+
+      - name: List
+        run: ls -lh dist/
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag || github.ref_name }}
+          files: dist/*.tar.gz
+          generate_release_notes: true
+          body: |
+            dufs 版本：v${{ steps.version.outputs.dufs_version }}
+          overwrite_files: true
