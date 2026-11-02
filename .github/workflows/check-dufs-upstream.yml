@@ -1,0 +1,81 @@
+name: check-dufs-upstream
+
+# 跟随 sigoden/dufs 的 release：只更新仓库里内嵌的 dufs 二进制和版本号，不自动出包。
+# 出包仍手动跑 scripts/build_opkg_ipk.sh。
+# 触发：每天一次 + 手动 Run workflow。
+# 注意：本仓目前只内嵌 aarch64-unknown-linux-musl 一个版本，workflow 也只跟这一个架构。
+
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Get latest dufs release
+        id: latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          TAG=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+            https://api.github.com/repos/sigoden/dufs/releases/latest | jq -r .tag_name)
+          # tag_name 形如 v0.47.0，去掉 v 前缀
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "latest=$TAG ($VERSION)"
+
+      - name: Compare with embedded version
+        id: compare
+        run: |
+          set -eu
+          CURRENT=$(cat DUFS_VERSION | tr -d ' \t\r\n')
+          LATEST="${{ steps.latest.outputs.version }}"
+          echo "current=$CURRENT latest=$LATEST"
+          if [ "$CURRENT" = "$LATEST" ]; then
+            echo "update=false" >> "$GITHUB_OUTPUT"
+            echo "already latest, nothing to do"
+          else
+            echo "update=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download and replace aarch64-musl binary
+        if: steps.compare.outputs.update == 'true'
+        env:
+          LATEST: ${{ steps.latest.outputs.version }}
+        run: |
+          set -eu
+          TARBALL="dufs-v${LATEST}-aarch64-unknown-linux-musl.tar.gz"
+          URL="https://github.com/sigoden/dufs/releases/download/v${LATEST}/${TARBALL}"
+          echo "downloading $URL"
+          curl -fsSL -o /tmp/dufs.tar.gz "$URL"
+          mkdir -p /tmp/dufs-new
+          tar -xzf /tmp/dufs.tar.gz -C /tmp/dufs-new
+          # runner 是 x86_64，跑不了 aarch64 二进制，只能用 file + strings 做静态校验
+          file /tmp/dufs-new/dufs | grep -q "ARM aarch64" || { echo "not an aarch64 binary" >&2; exit 1; }
+          strings /tmp/dufs-new/dufs | grep -q "__dufs_v${LATEST}__" || strings /tmp/dufs-new/dufs | grep -q "$LATEST" || { echo "version string not found in binary" >&2; exit 1; }
+          chmod 0755 /tmp/dufs-new/dufs
+          cp /tmp/dufs-new/dufs root/usr/bin/dufs
+          printf '%s\n' "$LATEST" > DUFS_VERSION
+          ls -l root/usr/bin/dufs DUFS_VERSION
+
+      - name: Commit and push
+        if: steps.compare.outputs.update == 'true'
+        env:
+          LATEST: ${{ steps.latest.outputs.version }}
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add root/usr/bin/dufs DUFS_VERSION
+          git commit -m "chore: follow sigoden/dufs v${LATEST}" || exit 0
+          git push
