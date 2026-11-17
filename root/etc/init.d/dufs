@@ -51,73 +51,27 @@ append_value_flag() {
 	[ -n "$value" ] && append_cmd "$flag" "$value"
 }
 
-start_instance() {
+# 启动一个 dufs 实例：$1=配置节名 $2=实例后缀(http/https) $3=端口 $4=tls_cert $5=tls_key $6=有效 assets（空=不传）
+start_dufs_instance() {
 	local cfg="$1"
-	local enabled serve_path user group tls_cert tls_key enable_https assets
-
-	config_get_bool enabled "$cfg" enabled 0
-	[ "$enabled" -eq 1 ] || return 0
+	local suffix="$2"
+	local port="$3"
+	local tls_cert="$4"
+	local tls_key="$5"
+	local assets="$6"
+	local serve_path user group
 
 	config_get serve_path "$cfg" serve_path "/mnt"
 	config_get user "$cfg" user "root"
 	config_get group "$cfg" group "root"
-	config_get enable_https "$cfg" enable_https ""
-	config_get assets "$cfg" assets "/usr/share/dufs-assets"
-	config_get tls_cert "$cfg" tls_cert ""
-	config_get tls_key "$cfg" tls_key ""
 
-	[ -x "$PROG" ] || return 1
-	case "$serve_path" in
-		/*) ;;
-		*)
-			echo "dufs: serve_path must be absolute path: $serve_path" >&2
-			return 1
-		;;
-	esac
-	[ -d "$serve_path" ] || {
-		echo "dufs: serve_path does not exist or is not a directory: $serve_path" >&2
-		return 1
-	}
-	# enable_https=0/false：明确关 HTTPS，证书路径留着也不传给 dufs，不校验文件
-	# enable_https=1/true：必须证书+私钥齐全；空值是老配置兼容：证书齐全就按 HTTPS 走
-	if [ "$enable_https" = "0" ] || [ "$enable_https" = "false" ]; then
-		tls_cert=""
-		tls_key=""
-	fi
-	if [ -n "$assets" ] && [ ! -d "$assets" ]; then
-		if [ "$assets" = "/usr/share/dufs-assets" ]; then
-			# 随包主题没装上时不让整个服务起不来，退回 dufs 内置界面并记一条日志
-			echo "dufs: bundled theme not found, falling back to built-in UI: $assets" >&2
-			assets=""
-		else
-			echo "dufs: assets directory not found: $assets" >&2
-			return 1
-		fi
-	fi
-	if [ -n "$tls_cert" ] && [ -z "$tls_key" ]; then
-		echo "dufs: tls_key is required when tls_cert is set" >&2
-		return 1
-	fi
-	if [ -n "$tls_key" ] && [ -z "$tls_cert" ]; then
-		echo "dufs: tls_cert is required when tls_key is set" >&2
-		return 1
-	fi
-	[ -z "$tls_cert" ] || [ -f "$tls_cert" ] || {
-		echo "dufs: tls_cert file not found: $tls_cert" >&2
-		return 1
-	}
-	[ -z "$tls_key" ] || [ -f "$tls_key" ] || {
-		echo "dufs: tls_key file not found: $tls_key" >&2
-		return 1
-	}
-
-	procd_open_instance
+	procd_open_instance "$cfg-$suffix"
 	procd_set_param command "$PROG"
 
 	BIND_FOUND=0
 	config_list_foreach "$cfg" bind append_bind_value
 	[ "$BIND_FOUND" -eq 1 ] || append_cmd --bind "0.0.0.0"
-	append_value_flag "$cfg" port --port "5000"
+	append_cmd --port "$port"
 	append_value_flag "$cfg" path_prefix --path-prefix ""
 	config_list_foreach "$cfg" hidden append_flagged_value --hidden
 	config_list_foreach "$cfg" auth append_flagged_value --auth
@@ -134,10 +88,10 @@ start_instance() {
 	append_bool_flag "$cfg" render_try_index --render-try-index
 	append_bool_flag "$cfg" render_spa --render-spa
 
-	append_value_flag "$cfg" assets --assets ""
 	append_value_flag "$cfg" log_format --log-format ""
 	append_value_flag "$cfg" log_file --log-file ""
 	append_value_flag "$cfg" compress --compress "low"
+	append_flagged_value "$assets" --assets
 	append_flagged_value "$tls_cert" --tls-cert
 	append_flagged_value "$tls_key" --tls-key
 
@@ -150,6 +104,132 @@ start_instance() {
 	procd_set_param stderr 1
 	procd_set_param respawn 3600 5 5
 	procd_close_instance
+}
+
+start_instance() {
+	local cfg="$1"
+	local enabled serve_path tls_cert tls_key enable_https
+	local http_enabled https_enabled http_port https_port legacy_port
+	local legacy_https http_on https_on
+
+	config_get_bool enabled "$cfg" enabled 0
+	[ "$enabled" -eq 1 ] || return 0
+
+	config_get serve_path "$cfg" serve_path "/mnt"
+	config_get tls_cert "$cfg" tls_cert ""
+	config_get tls_key "$cfg" tls_key ""
+	config_get enable_https "$cfg" enable_https ""
+	config_get legacy_port "$cfg" port ""
+
+	[ -x "$PROG" ] || return 1
+	case "$serve_path" in
+		/*) ;;
+		*)
+			echo "dufs: serve_path must be absolute path: $serve_path" >&2
+			return 1
+		;;
+	esac
+	[ -d "$serve_path" ] || {
+		echo "dufs: serve_path does not exist or is not a directory: $serve_path" >&2
+		return 1
+	}
+
+	# 老配置兼容：没填过新开关时，按旧 port/enable_https 反推单实例模式
+	# enable_https=1，或空值且证书齐全 -> 旧模式是 HTTPS only；否则是 HTTP only
+	legacy_https=0
+	if [ "$enable_https" = "1" ] || [ "$enable_https" = "true" ]; then
+		legacy_https=1
+	elif [ -z "$enable_https" ] && [ -n "$tls_cert" ] && [ -n "$tls_key" ]; then
+		legacy_https=1
+	fi
+
+	# HTTP 开关：新选项优先；没填过则老配置 HTTP only 时开，HTTPS only 时关
+	config_get http_enabled "$cfg" http_enabled ""
+	if [ -z "$http_enabled" ]; then
+		if [ "$legacy_https" -eq 1 ]; then
+			http_enabled="0"
+		else
+			http_enabled="1"
+		fi
+	fi
+	# HTTPS 开关：新选项优先；没填过则老配置 HTTPS only 时开，否则关
+	config_get https_enabled "$cfg" https_enabled ""
+	if [ -z "$https_enabled" ]; then
+		if [ "$legacy_https" -eq 1 ]; then
+			https_enabled="1"
+		else
+			https_enabled="0"
+		fi
+	fi
+	# 端口：新选项优先；没填过则老配置的 port 归属到正在跑的那一路，另一路用默认
+	config_get http_port "$cfg" http_port ""
+	if [ -z "$http_port" ]; then
+		if [ "$legacy_https" -eq 0 ] && [ -n "$legacy_port" ]; then
+			http_port="$legacy_port"
+		else
+			http_port="5006"
+		fi
+	fi
+	config_get https_port "$cfg" https_port ""
+	if [ -z "$https_port" ]; then
+		if [ "$legacy_https" -eq 1 ] && [ -n "$legacy_port" ]; then
+			https_port="$legacy_port"
+		else
+			https_port="5007"
+		fi
+	fi
+
+	# 明确关 HTTPS 就算证书路径留着也不传给 dufs、不校验文件
+	if [ "$https_enabled" != "1" ] && [ "$https_enabled" != "true" ]; then
+		https_on=0
+	else
+		https_on=1
+	fi
+	if [ "$http_enabled" = "1" ] || [ "$http_enabled" = "true" ]; then
+		http_on=1
+	else
+		http_on=0
+	fi
+
+	# assets 校验（两路共用，校验一次）；随包主题没装上时传空值退回 dufs 内置界面
+	local assets effective_assets
+	config_get assets "$cfg" assets "/usr/share/dufs-assets"
+	effective_assets="$assets"
+	if [ -n "$assets" ] && [ ! -d "$assets" ]; then
+		if [ "$assets" = "/usr/share/dufs-assets" ]; then
+			# 随包主题没装上时不让整个服务起不来，退回 dufs 内置界面并记一条日志
+			echo "dufs: bundled theme not found, falling back to built-in UI: $assets" >&2
+			effective_assets=""
+		else
+			echo "dufs: assets directory not found: $assets" >&2
+			return 1
+		fi
+	fi
+
+	# HTTPS 开着时证书+私钥必须齐全且文件存在
+	if [ "$https_on" -eq 1 ]; then
+		if [ -z "$tls_cert" ] || [ -z "$tls_key" ]; then
+			echo "dufs: https enabled but tls_cert/tls_key not configured" >&2
+			return 1
+		fi
+		[ -f "$tls_cert" ] || {
+			echo "dufs: tls_cert file not found: $tls_cert" >&2
+			return 1
+		}
+		[ -f "$tls_key" ] || {
+			echo "dufs: tls_key file not found: $tls_key" >&2
+			return 1
+		}
+	fi
+
+	# 两路端口不能撞
+	if [ "$http_on" -eq 1 ] && [ "$https_on" -eq 1 ] && [ "$http_port" = "$https_port" ]; then
+		echo "dufs: http_port and https_port must differ: $http_port" >&2
+		return 1
+	fi
+
+	[ "$http_on" -eq 1 ] && start_dufs_instance "$cfg" "http" "$http_port" "" "" "$effective_assets"
+	[ "$https_on" -eq 1 ] && start_dufs_instance "$cfg" "https" "$https_port" "$tls_cert" "$tls_key" "$effective_assets"
 }
 
 start_service() {
