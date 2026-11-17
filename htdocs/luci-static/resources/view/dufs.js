@@ -34,13 +34,44 @@ function isFlagEnabled(value) {
 	return value === true || value === 1 || value === '1' || value === 'true';
 }
 
+function isHttpEnabled(cfg) {
+	if (!cfg)
+		return false;
+	/* 新选项优先；老配置没填过 http_enabled 时按 enable_https 反推 */
+	if (cfg.http_enabled !== undefined && cfg.http_enabled !== null && cfg.http_enabled !== '')
+		return isFlagEnabled(cfg.http_enabled);
+	if (cfg.enable_https !== undefined && cfg.enable_https !== null && cfg.enable_https !== '')
+		return !isHttpsEnabled(cfg);
+	return true;
+}
+
 function isHttpsEnabled(cfg) {
 	if (!cfg)
 		return false;
-	/* 明确关掉就走 HTTP，哪怕证书路径还留着；没填过开关的老配置按证书是否齐全兼容 */
+	/* 新选项优先：打勾且证书齐全才算 HTTPS */
+	if (cfg.https_enabled !== undefined && cfg.https_enabled !== null && cfg.https_enabled !== '')
+		return isFlagEnabled(cfg.https_enabled) && !!(cfg.tls_cert && cfg.tls_key);
+	/* 老配置兼容：enable_https 明确关掉就走 HTTP，没填过开关的按证书是否齐全 */
 	if (cfg.enable_https === '0' || cfg.enable_https === false || cfg.enable_https === 0 || cfg.enable_https === 'false')
 		return false;
 	return !!(cfg.tls_cert && cfg.tls_key);
+}
+
+function resolvePort(cfg, which) {
+	if (which === 'https') {
+		if (cfg.https_port)
+			return String(cfg.https_port);
+		/* 老配置：HTTPS 走原来的 port */
+		if (isHttpsEnabled(cfg) && cfg.port)
+			return String(cfg.port);
+		return '5007';
+	}
+	if (cfg.http_port)
+		return String(cfg.http_port);
+	/* 老配置：HTTP 走原来的 port */
+	if (cfg.port)
+		return String(cfg.port);
+	return '5006';
 }
 
 function syncInitState(enabled) {
@@ -215,18 +246,20 @@ function getHostForURL() {
 }
 
 function buildBaseURL(cfg) {
-	var scheme = isHttpsEnabled(cfg) ? 'https' : 'http';
+	var https = isHttpsEnabled(cfg);
+	var scheme = https ? 'https' : 'http';
 	var host = getHostForURL();
-	var port = String(cfg.port || '5000');
+	var port = resolvePort(cfg, https ? 'https' : 'http');
 	var prefix = normalizePathPrefix(cfg.path_prefix);
 
 	return String.format('%s://%s:%s%s/', scheme, host, port, prefix);
 }
 
 function buildHealthURL(cfg) {
-	var scheme = isHttpsEnabled(cfg) ? 'https' : 'http';
+	var https = isHttpsEnabled(cfg);
+	var scheme = https ? 'https' : 'http';
 	var host = getHostForURL();
-	var port = String(cfg.port || '5000');
+	var port = resolvePort(cfg, https ? 'https' : 'http');
 	var prefix = normalizePathPrefix(cfg.path_prefix);
 
 	return String.format('%s://%s:%s%s/__dufs__/health', scheme, host, port, prefix);
@@ -587,13 +620,23 @@ return view.extend({
 		o.placeholder = '127.0.0.1';
 
 		o = s.option(
+			form.Flag,
+			'http_enabled',
+			_('启用 HTTP'),
+			_('打勾后以 HTTP 提供服务（局域网内传文件快，不加密）。关掉则只走 HTTPS。')
+		);
+		o.default = o.enabled;
+		/* 取消勾选也要写出 '0'，不能删掉配置项，否则 init 分不清“明确关掉”还是“老配置没填过” */
+		o.rmempty = false;
+
+		o = s.option(
 			form.Value,
-			'port',
-			_('监听端口'),
-			_('HTTP 服务端口，默认 5000。')
+			'http_port',
+			_('HTTP 端口'),
+			_('HTTP 服务端口，默认 5006。')
 		);
 		o.datatype = 'port';
-		o.placeholder = '5000';
+		o.placeholder = '5006';
 		o.rmempty = false;
 
 		o = s.option(
@@ -743,13 +786,23 @@ return view.extend({
 
 		o = s.option(
 			form.Flag,
-			'enable_https',
+			'https_enabled',
 			_('启用 HTTPS'),
-			_('打勾后才使用下面的证书和私钥以 HTTPS 提供服务；关掉则走 HTTP，证书路径留着也不生效。老配置只填了证书、没打过勾的，证书齐全时仍按 HTTPS 显示。')
+			_('打勾后以 HTTPS 提供服务（走公网 IPv6 访问时必须开，加密传输；局域网内会比 HTTP 慢）。关掉则只走 HTTP，证书路径留着也不生效。老配置只填了证书、没打过勾的，证书齐全时仍按 HTTPS 显示。')
 		);
 		o.default = o.disabled;
 		/* 取消勾选也要写出 '0'，不能删掉配置项：init 脚本靠 '0' 判断关 HTTPS，
 		   项被删掉会变成空值，被当成老配置兼容又走回 HTTPS（关不掉的 BUG） */
+		o.rmempty = false;
+
+		o = s.option(
+			form.Value,
+			'https_port',
+			_('HTTPS 端口'),
+			_('HTTPS 服务端口，默认 5007。')
+		);
+		o.datatype = 'port';
+		o.placeholder = '5007';
 		o.rmempty = false;
 
 		o = s.option(
