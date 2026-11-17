@@ -748,6 +748,9 @@ return view.extend({
 			_('打勾后才使用下面的证书和私钥以 HTTPS 提供服务；关掉则走 HTTP，证书路径留着也不生效。老配置只填了证书、没打过勾的，证书齐全时仍按 HTTPS 显示。')
 		);
 		o.default = o.disabled;
+		/* 取消勾选也要写出 '0'，不能删掉配置项：init 脚本靠 '0' 判断关 HTTPS，
+		   项被删掉会变成空值，被当成老配置兼容又走回 HTTPS（关不掉的 BUG） */
+		o.rmempty = false;
 
 		o = s.option(
 			form.Value,
