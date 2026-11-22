@@ -64,14 +64,14 @@ function resolvePort(cfg, which) {
 		/* 老配置：HTTPS 走原来的 port */
 		if (isHttpsEnabled(cfg) && cfg.port)
 			return String(cfg.port);
-		return '5007';
+		return '5006';
 	}
 	if (cfg.http_port)
 		return String(cfg.http_port);
 	/* 老配置：HTTP 走原来的 port */
 	if (cfg.port)
 		return String(cfg.port);
-	return '5006';
+	return '5005';
 }
 
 function syncInitState(enabled) {
@@ -633,10 +633,10 @@ return view.extend({
 			form.Value,
 			'http_port',
 			_('HTTP 端口'),
-			_('HTTP 服务端口，默认 5006。')
+			_('HTTP 服务端口，默认 5005。')
 		);
 		o.datatype = 'port';
-		o.placeholder = '5006';
+		o.placeholder = '5005';
 		o.rmempty = false;
 
 		o = s.option(
@@ -799,10 +799,10 @@ return view.extend({
 			form.Value,
 			'https_port',
 			_('HTTPS 端口'),
-			_('HTTPS 服务端口，默认 5007。')
+			_('HTTPS 服务端口，默认 5006。')
 		);
 		o.datatype = 'port';
-		o.placeholder = '5007';
+		o.placeholder = '5006';
 		o.rmempty = false;
 
 		o = s.option(
