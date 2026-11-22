@@ -167,7 +167,7 @@ start_instance() {
 		if [ "$legacy_https" -eq 0 ] && [ -n "$legacy_port" ]; then
 			http_port="$legacy_port"
 		else
-			http_port="5006"
+			http_port="5005"
 		fi
 	fi
 	config_get https_port "$cfg" https_port ""
@@ -175,7 +175,7 @@ start_instance() {
 		if [ "$legacy_https" -eq 1 ] && [ -n "$legacy_port" ]; then
 			https_port="$legacy_port"
 		else
-			https_port="5007"
+			https_port="5006"
 		fi
 	fi
 
